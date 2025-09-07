@@ -22,6 +22,14 @@ class EventInput(BaseModel):
 
 app = FastAPI()
 
+@app.get("/", include_in_schema=False)
+async def root():
+    return {"status": "ok"}
+
+@app.get("/healthz", include_in_schema=False)
+async def healthz():
+    return {"health": "ok"}
+
 origins = ["*"]
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
