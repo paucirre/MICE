@@ -113,9 +113,6 @@ def _generate_city_html(city_data, is_recommended=False):
     </div>
     """
 
-# api.py (reemplaza solo esta función)
-
-# api.py (reemplaza las dos últimas funciones)
 
 def generate_html_for_pdf(data: dict) -> str:
     event = data.get('event', {})
@@ -154,22 +151,22 @@ def generate_html_for_pdf(data: dict) -> str:
             }}
             .header {{
                 background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px;
-                text-align: center; padding: 25px; margin-bottom: 25px;
+                text-align: center; padding: 20px; margin-bottom: 15px;
             }}
-            .header h1 {{ color: #fff; font-size: 26px; margin: 0 0 10px 0; }}
+            .header h1 {{ color: #fff; font-size: 24px; margin: 0 0 10px 0; }}
             .header p {{ color: var(--accent-green); font-size: 16px; margin: 0; font-weight: 600; }}
             .card {{
                 background-color: var(--card-bg); border: 1px solid var(--border-color);
                 border-radius: 12px;
-                margin-bottom: 25px;
+                margin-bottom: 20px;
                 page-break-inside: avoid;
-                margin-top: 25px; /* <-- CAMBIO: Añadido margen superior a todas las cajas */
+                margin-top: 20px; /* <-- CAMBIO: Añadido margen superior a todas las cajas */
             }}
             .header + .card {{
                 margin-top: 0; /* <-- CAMBIO: Eliminamos el margen superior solo a la primera caja después del header */
             }}
             .card-header {{
-                padding: 15px 20px; /* <-- CAMBIO: Reducido el padding vertical */
+                padding: 12px 15px; /* <-- CAMBIO: Reducido el padding vertical */
                 border-bottom: 1px solid var(--border-color);
             }}
             .card-header h3 {{ font-size: 20px; color: #fff; margin: 0; display: inline-block; }}
@@ -224,5 +221,123 @@ async def generate_pdf_endpoint(data: dict):
             margin={"top": "0px", "bottom": "0px", "left": "0px", "right": "0px"}
         )
         
+        await browser.close()
+    return Response(content=pdf_bytes, media_type="application/pdf")
+
+
+# --- LÓGICA DE GENERACIÓN DE PDF PARA "IA MICE"  ---
+
+def _generate_mice_kpi_html(kpi_data):
+    """Genera el HTML para los KPIs del informe MICE."""
+    kpis = {
+        "ROI Estimado": f"{kpi_data.get('roi_est', 'N/A')}x",
+        "ADR Hotel (€)": _format_currency(kpi_data.get('adr_eur')),
+        "Capacidad Venue": f"{kpi_data.get('venue_capacity', 'N/A')}",
+        "Huella CO₂ (kg)": f"{kpi_data.get('co2_kg', 'N/A')}"
+    }
+    return "".join([f'<div><span>{label}:</span> <strong>{value}</strong></div>' for label, value in kpis.items()])
+
+def _generate_mice_city_html(city_data, is_recommended=False):
+    """Genera el bloque HTML para una ciudad del informe MICE."""
+    title = "🏆 Sede Recomendada" if is_recommended else "🏙️ Sede Alternativa"
+    badge_color = "#48bb78" if is_recommended else "#ed8936"
+    
+    return f"""
+    <div class="card">
+        <div class="card-header" style="background-color: {badge_color};">
+            {title}: {city_data.get('name', 'N/A')}
+        </div>
+        <div class="card-body">
+            <p class="venue">📍 {city_data.get('logistics', {}).get('main_venue', 'N/A')}</p>
+            <div class="kpi-block">
+                {_generate_mice_kpi_html(city_data.get('kpi', {}))}
+            </div>
+        </div>
+    </div>
+    """
+
+def generate_html_for_mice_pdf(data: dict) -> str:
+    """
+    Genera un string HTML auto-contenido y estilizado para el informe de IA MICE.
+    """
+    event = data.get('event', {})
+    recommendations = data.get('recommendations', {})
+    recommended_city = recommendations.get('recommended')
+    alternative_cities = recommendations.get('alternatives', [])
+    alternatives_html = "".join([_generate_mice_city_html(city) for city in alternative_cities])
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap" rel="stylesheet">
+        <style>
+            @page {{ margin: 0; }}
+            *, *::before, *::after {{ box-sizing: border-box; }}
+            html, body {{
+                margin: 0; padding: 0; width: 100%;
+                background-color: #f0f2f5 !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }}
+            body {{ font-family: 'Segoe UI', sans-serif; color: #2d3748; }}
+            .report-container {{ width: 100%; max-width: 800px; margin: auto; padding: 40px; }}
+            .header {{
+                text-align: center; padding-bottom: 20px;
+                border-bottom: 3px solid #667eea; margin-bottom: 30px;
+            }}
+            .header h1 {{ color: #667eea; font-size: 28px; margin: 0; }}
+            .card {{
+                background-color: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+                margin-bottom: 25px; page-break-inside: avoid; overflow: hidden;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+            }}
+            .card-header {{
+                color: white; padding: 15px 20px; font-size: 18px; font-weight: 600;
+                background: linear-gradient(135deg, #667eea, #764ba2);
+            }}
+            .card-body {{ padding: 20px; }}
+            .card-body h3 {{ font-size: 16px; margin: 0 0 15px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px; }}
+            .summary-text {{ font-size: 14px; line-height: 1.6; color: #4a5568; }}
+            .venue {{ font-weight: 600; color: #667eea; margin-bottom: 15px; }}
+            .kpi-block div {{
+                display: flex; justify-content: space-between;
+                padding: 8px 0; border-bottom: 1px solid #f7fafc;
+                font-size: 14px;
+            }}
+            .kpi-block div:last-child {{ border-bottom: none; }}
+            .kpi-block div span {{ color: #718096; }}
+        </style>
+    </head>
+    <body>
+        <div class="report-container">
+            <div class="header"><h1>📊 Informe de Recomendaciones IA MICE</h1></div>
+            <div class="card">
+                <div class="card-header" style="background: #fff; color: #2d3748;"><h3>📝 Resumen Ejecutivo</h3></div>
+                <div class="card-body"><p class="summary-text">{data.get('summary', 'No disponible.')}</p></div>
+            </div>
+            {_generate_mice_city_html(recommended_city, is_recommended=True) if recommended_city else ''}
+            {alternatives_html}
+        </div>
+    </body>
+    </html>
+    """
+    return html_content
+
+@app.post("/generate-pdf-mice")
+async def generate_mice_pdf_endpoint(data: dict):
+    html_content = generate_html_for_mice_pdf(data)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        await page.set_content(html_content)
+        await page.emulate_media(media="print")
+        
+        pdf_bytes = await page.pdf(
+            format="A4",
+            print_background=True,
+            margin={"top": "0.5in", "bottom": "0.5in", "left": "0.5in", "right": "0.5in"}
+        )
         await browser.close()
     return Response(content=pdf_bytes, media_type="application/pdf")
