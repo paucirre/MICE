@@ -4,3 +4,4 @@ openai>=1.0.0
 pydantic
 python-dotenv
 openai-agents
+playwright
