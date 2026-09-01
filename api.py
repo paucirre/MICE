@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from analysis_manager import AnalysisManager
@@ -6,6 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import json
 from playwright.async_api import async_playwright
+
+import auth
+from config import ALLOWED_ORIGINS, DIRECTOR_MODEL, RESEARCH_MODEL
+from logging_config import logger
 
 # --- Modelo de Datos (sin cambios) ---
 class EventInput(BaseModel):
@@ -20,11 +24,32 @@ class EventInput(BaseModel):
     location: str
     requirements: str | None = None
 
+class LoginInput(BaseModel):
+    password: str
+
+
+# Falla al importar si el servicio quedaria abierto. Preferimos que EasyPanel
+# muestre el contenedor caido a que arranque sin contrasena.
+auth.comprobar_configuracion()
+
 app = FastAPI()
 
-# --- CORS Middleware (sin cambios) ---
-origins = ["*"] # Puedes restringir esto a tu dominio en producción
-app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+# CORS restringido. Antes era ["*"], que junto con la ausencia de auth permitia
+# a cualquiera lanzar analisis contra esta API desde cualquier pagina.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+
+def exigir_token(x_demo_token: str = Header(default="")) -> str:
+    """Para endpoints normales, donde si se pueden enviar cabeceras."""
+    if not auth.token_valido(x_demo_token):
+        raise HTTPException(status_code=401, detail="Sesion no valida o caducada.")
+    return x_demo_token
 
 
 @app.get("/", include_in_schema=False)
@@ -35,18 +60,68 @@ async def root():
 async def healthz():
     return {"health": "ok"}
 
+@app.post("/login")
+async def login(datos: LoginInput):
+    if not auth.password_correcta(datos.password):
+        raise HTTPException(status_code=401, detail="Contrasena incorrecta.")
+    return {"token": auth.crear_token()}
+
+def _explicar_error(e: Exception) -> str:
+    """Convierte los fallos opacos de la API en algo accionable.
+
+    La v1 murio mostrando "Ha ocurrido un error fatal: Error code: 404" y no
+    habia forma de saber que OpenAI habia apagado la Assistants API. Un 404 de
+    esta API significa casi siempre que un modelo o un endpoint ya no existe.
+    """
+    texto = str(e)
+    if "404" in texto or "not found" in texto.lower():
+        return (
+            "El servidor de OpenAI respondio 404. Casi siempre significa que el "
+            "modelo configurado ya no existe. Revisa las variables de entorno "
+            f"DIRECTOR_MODEL ({DIRECTOR_MODEL}) y RESEARCH_MODEL ({RESEARCH_MODEL}) "
+            f"contra la lista de modelos vigentes. Detalle: {texto}"
+        )
+    if "401" in texto or "api key" in texto.lower():
+        return (
+            "OpenAI rechazo la clave (401). Revisa la variable OPENAI_API_KEY. "
+            f"Detalle: {texto}"
+        )
+    if "429" in texto:
+        return (
+            "OpenAI ha limitado el ritmo o la cuenta no tiene saldo (429). "
+            f"Detalle: {texto}"
+        )
+    return f"Ha ocurrido un error fatal: {texto}"
+
+
 async def run_analysis_in_background(event_data: dict, queue: asyncio.Queue):
     manager = AnalysisManager()
     try:
         await manager.run(event_data, queue)
     except Exception as e:
-        error_message = {"type": "error", "content": f"Ha ocurrido un error fatal: {e}"}
-        await queue.put(json.dumps(error_message))
+        logger.error("El analisis fallo", extra={"error": str(e), "input": event_data})
+        await queue.put(json.dumps({"type": "error", "content": _explicar_error(e)}))
     finally:
         await queue.put("END_OF_STREAM")
 
 @app.get("/analyze-stream")
-async def analyze_event_stream(request: Request, event_data_json: str = Query(...)):
+async def analyze_event_stream(
+    request: Request,
+    event_data_json: str = Query(...),
+    token: str = Query(default=""),
+):
+    # El token viaja por query string y no por cabecera porque EventSource no
+    # permite cabeceras personalizadas. Es un token de sesion de 8 horas, no un
+    # dato personal, pero queda en los logs del proxy: asumido para la demo, y
+    # resuelto en la v2 con cookie de sesion.
+    if not auth.token_valido(token):
+        raise HTTPException(status_code=401, detail="Sesion no valida o caducada.")
+    if not auth.dentro_del_limite(token):
+        raise HTTPException(
+            status_code=429,
+            detail="Has alcanzado el limite de analisis por hora de esta sesion.",
+        )
+
     try:
         event_data_dict = json.loads(event_data_json)
         event_data = EventInput.model_validate(event_data_dict)
@@ -206,7 +281,10 @@ def generate_html_for_pdf(data: dict) -> str:
     return html_content
 
 @app.post("/generate-pdf")
-async def generate_pdf_endpoint(data: dict):
+async def generate_pdf_endpoint(data: dict, _token: str = Depends(exigir_token)):
+    # Autenticado tambien: cada llamada arranca un Chromium y renderiza datos
+    # que vienen del cliente. Abierto, es a la vez un consumo de recursos
+    # gratuito y una inyeccion de HTML arbitrario en un navegador headless.
     html_content = generate_html_for_pdf(data)
     async with async_playwright() as p:
         browser = await p.chromium.launch()
@@ -326,7 +404,7 @@ def generate_html_for_mice_pdf(data: dict) -> str:
     return html_content
 
 @app.post("/generate-pdf-mice")
-async def generate_mice_pdf_endpoint(data: dict):
+async def generate_mice_pdf_endpoint(data: dict, _token: str = Depends(exigir_token)):
     html_content = generate_html_for_mice_pdf(data)
     async with async_playwright() as p:
         browser = await p.chromium.launch()

@@ -36,7 +36,10 @@ INSTRUCTIONS = (
     "gramática. Esto será consumido por alguien que sintetiza un informe, por lo que es vital que captures la "
     "esencia y ignores cualquier fluff. No incluyas ningún comentario adicional más que el resumen en sí."
 )
-search_agent = Agent( name="Agente de búsqueda", instructions=INSTRUCTIONS, tools=[WebSearchTool(search_context_size="medium")], model="gpt-4o-mini", model_settings=ModelSettings(tool_choice="required"), )
+# El modelo sale de config, no hardcodeado: "gpt-4o-mini" estaba fijado aqui y
+# se retiro junto con la familia gpt-4o, asi que arreglar solo el Director
+# habria reproducido el mismo 404 un paso mas adelante.
+search_agent = Agent( name="Agente de búsqueda", instructions=INSTRUCTIONS, tools=[WebSearchTool(search_context_size="medium")], model=RESEARCH_MODEL, model_settings=ModelSettings(tool_choice="required"), )
 
 # --- Orquestador del Equipo de Investigación (LÓGICA CORREGIDA) ---
 class ResearchTeamManager:

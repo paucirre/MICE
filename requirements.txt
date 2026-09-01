@@ -1,8 +1,11 @@
-fastapi
-uvicorn[standard]
-openai>=1.0.0
-pydantic
-python-dotenv
-openai-agents
-playwright
-logtail-python
+# Versiones fijadas a proposito. La v1 llevaba `openai>=1.0.0` sin fijar, asi
+# que cualquier reconstruccion de la imagen traia una version distinta. Fijar
+# no evita que OpenAI retire un endpoint, pero evita que el build cambie solo.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+openai==3.6.0
+openai-agents==0.22.0
+pydantic==2.13.5
+python-dotenv==1.2.3
+playwright==1.62.0
+logtail-python==0.4.0
