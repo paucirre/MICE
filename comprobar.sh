@@ -35,8 +35,16 @@ if [ "$CODIGO" = "200" ]; then
 else
   fallo "healthz responde $CODIGO (si es 000, el contenedor no esta arriba)"
   echo
-  echo "Sin servicio no tiene sentido seguir. Revisa los logs en EasyPanel:"
-  echo "si falta DEMO_PASSWORD o SESSION_SECRET, el arranque se bloquea aposta."
+  # Confusion habitual: pasar la URL del frontend en vez de la del backend.
+  if curl -s -m 20 "$BASE" | grep -qi '<html\|<!doctype'; then
+    echo "Esa URL devuelve HTML: parece el FRONTEND, no el backend."
+    echo "Necesitas la URL del servicio en EasyPanel, del tipo:"
+    echo "  https://<algo>.easypanel.host"
+    echo "No la de utopi.es, que solo sirve ficheros estaticos."
+  else
+    echo "Sin servicio no tiene sentido seguir. Revisa los logs en EasyPanel:"
+    echo "si falta DEMO_PASSWORD o SESSION_SECRET, el arranque se bloquea aposta."
+  fi
   exit 1
 fi
 

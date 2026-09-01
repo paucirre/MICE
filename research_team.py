@@ -14,17 +14,55 @@ class WebSearchQuery(BaseModel):
 class WebSearchPlan(BaseModel):
     searches: list[WebSearchQuery] = Field(description="Una lista de 5 a 10 búsquedas web específicas para realizar.")
 
-# --- Agente 1: Planificador (Sin cambios) ---
+# Esquema escrito a mano en vez de WebSearchPlan.model_json_schema(): pydantic
+# genera $defs y $ref, que el modo strict no admite.
+ESQUEMA_PLAN = {
+    "type": "object",
+    "properties": {
+        "searches": {
+            "type": "array",
+            "description": "Exactamente 5 búsquedas web específicas y detalladas.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Término de búsqueda optimizado para un buscador web.",
+                    }
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["searches"],
+    "additionalProperties": False,
+}
+
+
+# --- Agente 1: Planificador ---
 async def planner_agent(topic: str, update_queue: asyncio.Queue):
+    # Migrado de chat.completions a responses. Los modelos gpt-5.6 rechazan las
+    # function tools en /v1/chat/completions cuando llevan reasoning_effort:
+    # "To use function tools, use /v1/responses". Ademas, para arrancar una
+    # estructura fija, json_schema es mas directo que forzar una tool.
     await update_queue.put(json.dumps({"type": "status", "phase": "planning", "content": f"🧠 Planificador: Creando plan para '{topic}'..."}))
-    response = await openai_client.chat.completions.create(
+    response = await openai_client.responses.create(
         model=RESEARCH_MODEL,
-        messages=[{"role": "system", "content": "Eres un asistente de investigación experto. Dado un tema, genera un plan de exactamente 5 búsquedas web específicas y detalladas para recopilar la información más relevante."}, {"role": "user", "content": f"Tema de investigación: {topic}"}],
-        tools=[{"type": "function", "function": {"name": "generate_search_plan", "description": "Genera el plan de búsqueda estructurado.", "parameters": WebSearchPlan.model_json_schema()}}],
-        tool_choice={"type": "function", "function": {"name": "generate_search_plan"}},
+        input=[
+            {"role": "system", "content": "Eres un asistente de investigación experto. Dado un tema, genera un plan de exactamente 5 búsquedas web específicas y detalladas para recopilar la información más relevante."},
+            {"role": "user", "content": f"Tema de investigación: {topic}"},
+        ],
+        text={
+            "format": {
+                "type": "json_schema",
+                "name": "plan_de_busqueda",
+                "schema": ESQUEMA_PLAN,
+                "strict": True,
+            }
+        },
     )
-    tool_call = response.choices[0].message.tool_calls[0]
-    function_args = json.loads(tool_call.function.arguments)
+    function_args = json.loads(response.output_text)
     await update_queue.put(json.dumps({"type": "status", "phase": "planning_complete", "content": f"✅ Plan creado con {len(function_args.get('searches', []))} búsquedas."}))
     return WebSearchPlan(**function_args)
 
